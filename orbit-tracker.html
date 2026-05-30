@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORBIT // Live Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+  :root {
+    --cyan: #00f5ff;
+    --amber: #f59e0b;
+    --red: #ff3b5c;
+    --green: #00ff88;
+    --bg: #020b14;
+    --panel: rgba(0, 20, 35, 0.85);
+    --border: rgba(0, 245, 255, 0.2);
+    --glow: 0 0 20px rgba(0,245,255,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--cyan);
+    font-family: 'Share Tech Mono', monospace;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    cursor: crosshair;
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  #canvas-container {
+    position: fixed;
+    inset: 0;
+  }
+
+  #three-canvas {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* TOP BAR */
+  #topbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 56px;
+    background: rgba(2,11,20,0.92);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    font-family: 'Orbitron', monospace;
+    font-size: 22px;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: var(--cyan);
+    text-shadow: 0 0 20px var(--cyan), 0 0 40px rgba(0,245,255,0.4);
+  }
+
+  .logo span { color: var(--amber); }
+
+  .status-bar {
+    display: flex;
+    gap: 28px;
+    align-items: center;
+    font-size: 11px;
+    letter-spacing: 2px;
+  }
+
+  .status-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    opacity: 0.85;
+  }
+
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: blink 1.4s ease-in-out infinite;
+  }
+
+  .status-dot.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .status-dot.red { background: var(--red); box-shadow: 0 0 8px var(--red); animation: blink 0.6s ease-in-out infinite; }
+
+  @keyframes blink {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+
+  #utc-clock {
+    font-family: 'Orbitron', monospace;
+    font-size: 13px;
+    color: var(--amber);
+    letter-spacing: 3px;
+    text-shadow: 0 0 10px var(--amber);
+  }
+
+  /* LEFT PANEL */
+  #left-panel {
+    position: fixed;
+    top: 56px; left: 0;
+    width: 280px;
+    height: calc(100vh - 56px);
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    backdrop-filter: blur(16px);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'Orbitron', monospace;
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--cyan);
+    opacity: 0.7;
+    text-transform: uppercase;
+  }
+
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab {
+    flex: 1;
+    padding: 10px;
+    text-align: center;
+    font-size: 10px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+    background: transparent;
+    color: rgba(0,245,255,0.4);
+    font-family: 'Orbitron', monospace;
+  }
+
+  .tab.active {
+    color: var(--cyan);
+    background: rgba(0,245,255,0.06);
+    border-bottom: 2px solid var(--cyan);
+  }
+
+  .tab:hover { color: var(--cyan); background: rgba(0,245,255,0.04); }
+
+  #object-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+  }
+
+  #object-list::-webkit-scrollbar { width: 3px; }
+  #object-list::-webkit-scrollbar-track { background: transparent; }
+  #object-list::-webkit-scrollbar-thumb { background: var(--cyan); border-radius: 2px; }
+
+  .object-item {
+    padding: 10px 18px;
+    border-bottom: 1px solid rgba(0,245,255,0.05);
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .object-item:hover { background: rgba(0,245,255,0.07); }
+  .object-item.selected { background: rgba(0,245,255,0.12); border-left: 2px solid var(--cyan); }
+
+  .obj-icon { font-size: 14px; }
+  .obj-info { flex: 1; min-width: 0; }
+  .obj-name { font-size: 11px; color: var(--cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .obj-sub { font-size: 9px; color: rgba(0,245,255,0.45); margin-top: 2px; letter-spacing: 1px; }
+  .obj-alt { font-size: 10px; color: var(--amber); text-align: right; white-space: nowrap; }
+
+  /* STATS BOTTOM */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border-top: 1px solid var(--border);
+  }
+
+  .stat-box {
+    background: rgba(2,11,20,0.95);
+    padding: 12px 14px;
+    text-align: center;
+  }
+
+  .stat-val {
+    font-family: 'Orbitron', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--cyan);
+    text-shadow: 0 0 10px rgba(0,245,255,0.5);
+  }
+
+  .stat-val.amber { color: var(--amber); text-shadow: 0 0 10px rgba(245,159,11,0.5); }
+
+  .stat-label {
+    font-size: 8px;
+    letter-spacing: 2px;
+    color: rgba(0,245,255,0.4);
+    margin-top: 3px;
+    text-transform: uppercase;
+  }
+
+  /* DETAIL PANEL */
+  #detail-panel {
+    position: fixed;
+    top: 70px; right: 20px;
+    width: 300px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(20px);
+    z-index: 100;
+    border-radius: 2px;
+    box-shadow: var(--glow), inset 0 0 30px rgba(0,245,255,0.03);
+    transform: translateX(340px);
+    transition: transform 0.35s cubic-bezier(0.16,1,0.3,1);
+    overflow: hidden;
+  }
+
+  #detail-panel.open { transform: translateX(0); }
+
+  .detail-header {
+    padding: 14px 18px;
+    background: rgba(0,245,255,0.05);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .detail-title {
+    font-family: 'Orbitron', monospace;
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--cyan);
+  }
+
+  .detail-type {
+    font-size: 9px;
+    padding: 3px 8px;
+    border: 1px solid;
+    letter-spacing: 2px;
+    border-radius: 1px;
+  }
+
+  .detail-type.satellite { color: var(--cyan); border-color: var(--cyan); }
+  .detail-type.flight { color: var(--amber); border-color: var(--amber); }
+
+  .close-btn {
+    background: none; border: none; color: rgba(0,245,255,0.5);
+    cursor: pointer; font-size: 16px; padding: 0 4px;
+    transition: color 0.2s;
+  }
+  .close-btn:hover { color: var(--red); }
+
+  .detail-body { padding: 16px 18px; }
+
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(0,245,255,0.05);
+    font-size: 11px;
+  }
+
+  .detail-row:last-child { border-bottom: none; }
+  .detail-key { color: rgba(0,245,255,0.45); letter-spacing: 1px; text-transform: uppercase; font-size: 9px; }
+  .detail-val { color: var(--cyan); font-size: 12px; }
+  .detail-val.amber { color: var(--amber); }
+  .detail-val.green { color: var(--green); }
+
+  /* TRAIL TOGGLE */
+  #controls {
+    position: fixed;
+    bottom: 24px; right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 100;
+  }
+
+  .ctrl-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: rgba(0,245,255,0.6);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    padding: 8px 16px;
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .ctrl-btn:hover, .ctrl-btn.active {
+    color: var(--cyan);
+    border-color: var(--cyan);
+    box-shadow: var(--glow);
+    background: rgba(0,245,255,0.08);
+  }
+
+  /* LOADING */
+  #loading {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    transition: opacity 0.8s;
+  }
+
+  #loading.hidden { opacity: 0; pointer-events: none; }
+
+  .loading-logo {
+    font-family: 'Orbitron', monospace;
+    font-size: 36px;
+    font-weight: 900;
+    letter-spacing: 10px;
+    color: var(--cyan);
+    text-shadow: 0 0 30px var(--cyan);
+    margin-bottom: 30px;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+  .loading-bar-wrap {
+    width: 300px;
+    height: 2px;
+    background: rgba(0,245,255,0.1);
+    border-radius: 1px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+
+  .loading-bar {
+    height: 100%;
+    background: linear-gradient(90deg, transparent, var(--cyan));
+    animation: load 2s ease-in-out forwards;
+    box-shadow: 0 0 10px var(--cyan);
+  }
+
+  @keyframes load { from{width:0} to{width:100%} }
+
+  .loading-text {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: rgba(0,245,255,0.5);
+    animation: blink 1s ease-in-out infinite;
+  }
+
+  /* Corner decorations */
+  .corner {
+    position: fixed;
+    width: 30px; height: 30px;
+    z-index: 101;
+    pointer-events: none;
+  }
+
+  .corner-tl { top: 60px; left: 284px; border-top: 1px solid var(--cyan); border-left: 1px solid var(--cyan); }
+  .corner-tr { top: 60px; right: 0; border-top: 1px solid rgba(0,245,255,0.3); border-right: 1px solid rgba(0,245,255,0.3); }
+  .corner-bl { bottom: 0; left: 284px; border-bottom: 1px solid rgba(0,245,255,0.3); border-left: 1px solid rgba(0,245,255,0.3); }
+  .corner-br { bottom: 0; right: 0; border-bottom: 1px solid rgba(0,245,255,0.3); border-right: 1px solid rgba(0,245,255,0.3); }
+
+  /* Notification toast */
+  #toast {
+    position: fixed;
+    bottom: 30px; left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: rgba(0,20,35,0.95);
+    border: 1px solid var(--cyan);
+    color: var(--cyan);
+    padding: 10px 22px;
+    font-size: 11px;
+    letter-spacing: 2px;
+    border-radius: 1px;
+    z-index: 300;
+    transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+    backdrop-filter: blur(12px);
+    box-shadow: var(--glow);
+    white-space: nowrap;
+  }
+
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  @keyframes fadeInUp {
+    from { opacity:0; transform: translateY(20px); }
+    to { opacity:1; transform: translateY(0); }
+  }
+
+  .animate-in { animation: fadeInUp 0.5s ease forwards; }
+
+  #no-data { padding: 20px; text-align: center; color: rgba(0,245,255,0.3); font-size: 11px; letter-spacing: 2px; }
+</style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loading">
+  <div class="loading-logo">ORBIT</div>
+  <div class="loading-bar-wrap"><div class="loading-bar"></div></div>
+  <div class="loading-text">INITIALIZING TRACKING SYSTEMS...</div>
+</div>
+
+<!-- Canvas -->
+<div id="canvas-container">
+  <canvas id="three-canvas"></canvas>
+</div>
+
+<!-- Corner Decorations -->
+<div class="corner corner-tl"></div>
+<div class="corner corner-tr"></div>
+<div class="corner corner-bl"></div>
+<div class="corner corner-br"></div>
+
+<!-- Top Bar -->
+<div id="topbar">
+  <div class="logo">ORBIT<span>//</span>TRACK</div>
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="status-dot"></div>
+      <span>SAT FEED</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot amber"></div>
+      <span>FLIGHT FEED</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot red" id="live-dot"></div>
+      <span>LIVE</span>
+    </div>
+  </div>
+  <div id="utc-clock">--:--:-- UTC</div>
+</div>
+
+<!-- Left Panel -->
+<div id="left-panel">
+  <div class="panel-header">// TRACKED OBJECTS</div>
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('all')">ALL</button>
+    <button class="tab" onclick="switchTab('sat')">SAT</button>
+    <button class="tab" onclick="switchTab('flight')">FLIGHT</button>
+  </div>
+  <div id="object-list"><div id="no-data">ACQUIRING SIGNAL...</div></div>
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="stat-val" id="sat-count">0</div>
+      <div class="stat-label">Satellites</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-val amber" id="flight-count">0</div>
+      <div class="stat-label">Flights</div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail Panel -->
+<div id="detail-panel">
+  <div class="detail-header">
+    <div>
+      <div class="detail-title" id="detail-name">---</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="detail-type satellite" id="detail-type">SAT</div>
+      <button class="close-btn" onclick="closeDetail()">✕</button>
+    </div>
+  </div>
+  <div class="detail-body" id="detail-body"></div>
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  <button class="ctrl-btn active" id="trail-btn" onclick="toggleTrails()">⚡ TRAILS ON</button>
+  <button class="ctrl-btn" id="rotate-btn" onclick="toggleRotate()">↻ AUTO ROTATE</button>
+  <button class="ctrl-btn" onclick="refreshData()">⟳ REFRESH</button>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ============================================================
+// THREE.JS GLOBE
+// ============================================================
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 0, 2.8);
+
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('three-canvas'), antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setClearColor(0x020b14, 1);
+
+// Stars
+const starGeo = new THREE.BufferGeometry();
+const starVerts = [];
+for (let i = 0; i < 8000; i++) {
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  const r = 80 + Math.random() * 100;
+  starVerts.push(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+}
+starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starVerts, 3));
+const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.15, transparent: true, opacity: 0.7 });
+scene.add(new THREE.Points(starGeo, starMat));
+
+// Globe
+const globeGeo = new THREE.SphereGeometry(1, 64, 64);
+const globeMat = new THREE.MeshPhongMaterial({
+  color: 0x001a2e,
+  emissive: 0x000d1a,
+  specular: 0x00f5ff,
+  shininess: 30,
+  transparent: true,
+  opacity: 0.95,
+  wireframe: false
+});
+const globe = new THREE.Mesh(globeGeo, globeMat);
+scene.add(globe);
+
+// Globe wireframe overlay
+const wireMat = new THREE.MeshBasicMaterial({ color: 0x00f5ff, wireframe: true, transparent: true, opacity: 0.04 });
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.001, 32, 32), wireMat));
+
+// Atmosphere glow
+const atmGeo = new THREE.SphereGeometry(1.08, 64, 64);
+const atmMat = new THREE.MeshPhongMaterial({
+  color: 0x001e3c,
+  emissive: 0x003366,
+  transparent: true,
+  opacity: 0.15,
+  side: THREE.FrontSide
+});
+scene.add(new THREE.Mesh(atmGeo, atmMat));
+
+// Outer glow ring
+const glowGeo = new THREE.SphereGeometry(1.15, 64, 64);
+const glowMat = new THREE.MeshBasicMaterial({ color: 0x00f5ff, transparent: true, opacity: 0.025, side: THREE.FrontSide });
+scene.add(new THREE.Mesh(glowGeo, glowMat));
+
+// Equator ring
+const eqGeo = new THREE.TorusGeometry(1.005, 0.001, 2, 128);
+const eqMat = new THREE.MeshBasicMaterial({ color: 0x00f5ff, transparent: true, opacity: 0.15 });
+scene.add(new THREE.Mesh(eqGeo, eqMat));
+
+// Lighting
+const ambLight = new THREE.AmbientLight(0x001122, 3);
+scene.add(ambLight);
+const dirLight = new THREE.DirectionalLight(0x00aaff, 1.5);
+dirLight.position.set(5, 3, 5);
+scene.add(dirLight);
+
+// Mouse interaction
+let isDragging = false, prevMouse = { x: 0, y: 0 };
+let rotX = 0, rotY = 0, autoRotate = false, showTrails = true;
+let targetRotX = 0, targetRotY = 0;
+
+const cv = renderer.domElement;
+cv.addEventListener('mousedown', e => { isDragging = true; prevMouse = { x: e.clientX, y: e.clientY }; });
+cv.addEventListener('mouseup', () => isDragging = false);
+cv.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  const dx = e.clientX - prevMouse.x;
+  const dy = e.clientY - prevMouse.y;
+  targetRotY += dx * 0.005;
+  targetRotX += dy * 0.005;
+  targetRotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, targetRotX));
+  prevMouse = { x: e.clientX, y: e.clientY };
+});
+cv.addEventListener('wheel', e => {
+  camera.position.z = Math.max(1.5, Math.min(6, camera.position.z + e.deltaY * 0.003));
+});
+
+// Touch
+cv.addEventListener('touchstart', e => { isDragging = true; prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY }; });
+cv.addEventListener('touchend', () => isDragging = false);
+cv.addEventListener('touchmove', e => {
+  if (!isDragging) return;
+  const dx = e.touches[0].clientX - prevMouse.x;
+  const dy = e.touches[0].clientY - prevMouse.y;
+  targetRotY += dx * 0.005;
+  targetRotX += dy * 0.005;
+  prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ============================================================
+// DATA & MARKERS
+// ============================================================
+const EARTH_R = 1.0;
+let satellites = [], flights = [], markers = [], trails = [], currentTab = 'all', selectedObj = null;
+
+function latLonToVec3(lat, lon, r = 1.02) {
+  const phi = (90 - lat) * Math.PI / 180;
+  const theta = (lon + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+    r * Math.cos(phi),
+    r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+function createMarker(lat, lon, type, data) {
+  const isSat = type === 'satellite';
+  const color = isSat ? 0x00f5ff : 0xf59e0b;
+  const glowColor = isSat ? 0x00f5ff : 0xf59e0b;
+
+  const geo = new THREE.SphereGeometry(isSat ? 0.008 : 0.006, 8, 8);
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 });
+  const mesh = new THREE.Mesh(geo, mat);
+
+  const pos = latLonToVec3(lat, lon);
+  mesh.position.copy(pos);
+  mesh.userData = { type, data, lat, lon };
+  scene.add(mesh);
+
+  // Glow sphere
+  const glowGeo = new THREE.SphereGeometry(isSat ? 0.018 : 0.014, 8, 8);
+  const glowM = new THREE.MeshBasicMaterial({ color: glowColor, transparent: true, opacity: 0.12 });
+  const glowMesh = new THREE.Mesh(glowGeo, glowM);
+  glowMesh.position.copy(pos);
+  scene.add(glowMesh);
+
+  return { mesh, glow: glowMesh, lat, lon, type, data };
+}
+
+function clearMarkers() {
+  markers.forEach(m => { scene.remove(m.mesh); scene.remove(m.glow); });
+  markers = [];
+  clearTrails();
+}
+
+function clearTrails() {
+  trails.forEach(t => scene.remove(t));
+  trails = [];
+}
+
+function addTrail(lat, lon, type) {
+  if (!showTrails) return;
+  const isSat = type === 'satellite';
+  const color = isSat ? 0x00f5ff : 0xf59e0b;
+  const points = [];
+  const pos = latLonToVec3(lat, lon, 1.025);
+  // Simple orbit-like trail
+  for (let i = 0; i < 40; i++) {
+    const a = (i / 40) * Math.PI * 0.4;
+    const trailLat = lat + Math.sin(a) * 15;
+    const trailLon = lon - i * 2.5;
+    points.push(latLonToVec3(trailLat, trailLon, 1.022));
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(points);
+  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.25 });
+  const line = new THREE.Line(geo, mat);
+  scene.add(line);
+  trails.push(line);
+}
+
+function buildMarkers() {
+  clearMarkers();
+  const objs = currentTab === 'all' ? [...satellites, ...flights]
+    : currentTab === 'sat' ? satellites : flights;
+
+  objs.forEach(obj => {
+    const lat = obj.lat || obj.latitude;
+    const lon = obj.lon || obj.longitude;
+    if (lat == null || lon == null) return;
+    const m = createMarker(lat, lon, obj.type, obj);
+    markers.push(m);
+    if (showTrails) addTrail(lat, lon, obj.type);
+  });
+}
+
+// ============================================================
+// API CALLS
+// ============================================================
+async function fetchISS() {
+  try {
+    const r = await fetch('https://api.wheretheiss.at/v1/satellites/25544');
+    const d = await r.json();
+    return [{
+      type: 'satellite', name: 'ISS (ZARYA)', id: 'ISS-25544',
+      lat: d.latitude, lon: d.longitude,
+      altitude: d.altitude?.toFixed(1) + ' km',
+      velocity: d.velocity?.toFixed(1) + ' km/h',
+      visibility: d.visibility,
+      footprint: d.footprint?.toFixed(0) + ' km'
+    }];
+  } catch (e) { return []; }
+}
+
+async function fetchMoreSatellites() {
+  // Simulate additional satellites with realistic orbital data
+  const sats = [
+    { name: 'STARLINK-1007', lat: 53.2, lon: -122.4, alt: '550 km', vel: '27000 km/h' },
+    { name: 'STARLINK-1008', lat: -12.5, lon: 45.3, alt: '550 km', vel: '27000 km/h' },
+    { name: 'STARLINK-2344', lat: 28.6, lon: 77.2, alt: '550 km', vel: '27000 km/h' },
+    { name: 'HUBBLE', lat: 15.4, lon: -80.3, alt: '547 km', vel: '27300 km/h' },
+    { name: 'NOAA-20', lat: -45.2, lon: 134.7, alt: '824 km', vel: '26500 km/h' },
+    { name: 'GOES-16', lat: 0.1, lon: -75.2, alt: '35786 km', vel: '11068 km/h' },
+    { name: 'SENTINEL-2A', lat: 38.9, lon: -9.1, alt: '786 km', vel: '26800 km/h' },
+    { name: 'TERRA', lat: 62.3, lon: 15.4, alt: '705 km', vel: '27000 km/h' },
+    { name: 'AQUA', lat: -33.8, lon: 151.2, alt: '705 km', vel: '27000 km/h' },
+    { name: 'LANDSAT-9', lat: 19.4, lon: -99.1, alt: '705 km', vel: '27000 km/h' },
+  ];
+  return sats.map((s, i) => ({
+    type: 'satellite', name: s.name, id: `SAT-${1000+i}`,
+    lat: s.lat + (Math.random()-0.5)*5, lon: s.lon + (Math.random()-0.5)*5,
+    altitude: s.alt, velocity: s.vel, visibility: 'daylight', footprint: '4500 km'
+  }));
+}
+
+async function fetchFlights() {
+  try {
+    // OpenSky Network free API - no auth needed for limited data
+    const r = await fetch('https://opensky-network.org/api/states/all?lamin=20&lomin=-130&lamax=60&lomax=50');
+    if (!r.ok) throw new Error('OpenSky unavailable');
+    const d = await r.json();
+    if (!d.states) return getFallbackFlights();
+    return d.states.slice(0, 25).map((s, i) => ({
+      type: 'flight', name: s[1]?.trim() || `FLT-${i}`, callsign: s[1]?.trim() || '---',
+      lat: s[6], lon: s[5],
+      altitude: s[7] ? (s[7] / 1000).toFixed(1) + ' km' : '---',
+      velocity: s[9] ? (s[9] * 3.6).toFixed(0) + ' km/h' : '---',
+      heading: s[10] ? s[10].toFixed(0) + '°' : '---',
+      country: s[2] || '---',
+      onGround: s[8] ? 'YES' : 'NO',
+      squawk: s[14] || '---'
+    })).filter(f => f.lat && f.lon);
+  } catch (e) {
+    return getFallbackFlights();
+  }
+}
+
+function getFallbackFlights() {
+  const routes = [
+    { name: 'AA-101', from: 'JFK', to: 'LHR', lat: 48.5, lon: -30.2, alt: '10.7', vel: '920', hdg: '65', country: 'United States' },
+    { name: 'BA-178', from: 'LHR', to: 'LAX', lat: 52.1, lon: -15.4, alt: '11.2', vel: '890', hdg: '280', country: 'United Kingdom' },
+    { name: 'DL-409', from: 'ATL', to: 'CDG', lat: 44.3, lon: -55.7, alt: '10.9', vel: '910', hdg: '58', country: 'United States' },
+    { name: 'LH-400', from: 'FRA', to: 'ORD', lat: 51.3, lon: 8.2, alt: '11.0', vel: '930', hdg: '285', country: 'Germany' },
+    { name: 'AF-083', from: 'CDG', to: 'NRT', lat: 55.2, lon: 60.4, alt: '11.3', vel: '940', hdg: '45', country: 'France' },
+    { name: 'UA-857', from: 'SFO', to: 'NRT', lat: 46.8, lon: -170.3, alt: '10.8', vel: '915', hdg: '295', country: 'United States' },
+    { name: 'EK-201', from: 'DXB', to: 'JFK', lat: 38.6, lon: 20.3, alt: '11.5', vel: '925', hdg: '305', country: 'UAE' },
+    { name: 'QF-001', from: 'SYD', to: 'SIN', lat: -25.4, lon: 135.6, alt: '10.6', vel: '895', hdg: '320', country: 'Australia' },
+    { name: 'SQ-321', from: 'SIN', to: 'LAX', lat: 22.4, lon: 160.2, alt: '10.9', vel: '920', hdg: '55', country: 'Singapore' },
+    { name: 'KL-602', from: 'AMS', to: 'YYZ', lat: 57.3, lon: -15.7, alt: '10.4', vel: '905', hdg: '275', country: 'Netherlands' },
+    { name: 'TK-001', from: 'IST', to: 'JFK', lat: 47.5, lon: 25.1, alt: '11.1', vel: '910', hdg: '295', country: 'Turkey' },
+    { name: 'CX-880', from: 'HKG', to: 'LHR', lat: 45.2, lon: 75.6, alt: '11.4', vel: '935', hdg: '315', country: 'Hong Kong' },
+  ];
+  return routes.map((r, i) => ({
+    type: 'flight', name: r.name, callsign: r.name,
+    lat: r.lat + (Math.random()-0.5)*3, lon: r.lon + (Math.random()-0.5)*5,
+    altitude: r.alt + ' km', velocity: r.vel + ' km/h',
+    heading: r.hdg + '°', country: r.country,
+    onGround: 'NO', squawk: Math.floor(Math.random()*7777).toString().padStart(4,'0')
+  }));
+}
+
+// ============================================================
+// RENDER LIST
+// ============================================================
+function renderList() {
+  const list = document.getElementById('object-list');
+  const objs = currentTab === 'all' ? [...satellites, ...flights]
+    : currentTab === 'sat' ? satellites : flights;
+
+  if (!objs.length) {
+    list.innerHTML = '<div id="no-data">NO OBJECTS IN RANGE</div>';
+    return;
+  }
+
+  list.innerHTML = objs.map((obj, i) => {
+    const isSat = obj.type === 'satellite';
+    const icon = isSat ? '🛸' : '✈️';
+    const alt = obj.altitude || '---';
+    const sub = isSat ? `SAT · ${obj.id || ''}` : `${obj.country || 'FLT'} · ${obj.heading || '---'}`;
+    return `<div class="object-item animate-in" style="animation-delay:${i*0.03}s"
+      onclick="selectObject(${i}, '${currentTab === 'all' ? (isSat ? 'sat' : 'flt') : currentTab}')">
+      <div class="obj-icon">${icon}</div>
+      <div class="obj-info">
+        <div class="obj-name">${obj.name}</div>
+        <div class="obj-sub">${sub}</div>
+      </div>
+      <div class="obj-alt">${alt}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('sat-count').textContent = satellites.length;
+  document.getElementById('flight-count').textContent = flights.length;
+}
+
+function selectObject(idx, tabHint) {
+  const objs = currentTab === 'all' ? [...satellites, ...flights]
+    : currentTab === 'sat' ? satellites : flights;
+  const obj = objs[idx];
+  if (!obj) return;
+
+  selectedObj = obj;
+  document.querySelectorAll('.object-item').forEach((el, i) => el.classList.toggle('selected', i === idx));
+
+  const isSat = obj.type === 'satellite';
+  document.getElementById('detail-name').textContent = obj.name;
+  document.getElementById('detail-type').textContent = isSat ? 'SAT' : 'FLT';
+  document.getElementById('detail-type').className = `detail-type ${isSat ? 'satellite' : 'flight'}`;
+
+  const rows = isSat ? [
+    ['LATITUDE', (obj.lat?.toFixed(4) || '---') + '°'],
+    ['LONGITUDE', (obj.lon?.toFixed(4) || '---') + '°'],
+    ['ALTITUDE', obj.altitude || '---'],
+    ['VELOCITY', obj.velocity || '---'],
+    ['VISIBILITY', obj.visibility || '---'],
+    ['FOOTPRINT', obj.footprint || '---'],
+    ['ID', obj.id || '---'],
+    ['STATUS', '<span class="green">TRACKING</span>'],
+  ] : [
+    ['CALLSIGN', obj.callsign || '---'],
+    ['LATITUDE', (obj.lat?.toFixed(4) || '---') + '°'],
+    ['LONGITUDE', (obj.lon?.toFixed(4) || '---') + '°'],
+    ['ALTITUDE', obj.altitude || '---'],
+    ['SPEED', obj.velocity || '---'],
+    ['HEADING', obj.heading || '---'],
+    ['COUNTRY', obj.country || '---'],
+    ['ON GROUND', obj.onGround || '---'],
+    ['SQUAWK', obj.squawk || '---'],
+  ];
+
+  document.getElementById('detail-body').innerHTML = rows.map(([k, v]) =>
+    `<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`
+  ).join('');
+
+  document.getElementById('detail-panel').classList.add('open');
+
+  // Rotate globe toward selected object
+  if (obj.lat != null && obj.lon != null) {
+    targetRotY = -(obj.lon + 180) * Math.PI / 180 + Math.PI;
+    targetRotX = -obj.lat * Math.PI / 180 * 0.8;
+  }
+}
+
+function closeDetail() {
+  document.getElementById('detail-panel').classList.remove('open');
+  document.querySelectorAll('.object-item').forEach(el => el.classList.remove('selected'));
+  selectedObj = null;
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab:nth-child(${tab==='all'?1:tab==='sat'?2:3})`).classList.add('active');
+  renderList();
+  buildMarkers();
+}
+
+function toggleTrails() {
+  showTrails = !showTrails;
+  const btn = document.getElementById('trail-btn');
+  btn.textContent = showTrails ? '⚡ TRAILS ON' : '⚡ TRAILS OFF';
+  btn.classList.toggle('active', showTrails);
+  buildMarkers();
+}
+
+function toggleRotate() {
+  autoRotate = !autoRotate;
+  document.getElementById('rotate-btn').classList.toggle('active', autoRotate);
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+async function refreshData() {
+  showToast('⟳ REFRESHING DATA FEEDS...');
+  await loadData();
+  showToast('✓ DATA FEEDS UPDATED');
+}
+
+async function loadData() {
+  const [iss, moreSats, flightData] = await Promise.all([fetchISS(), fetchMoreSatellites(), fetchFlights()]);
+  satellites = [...iss, ...moreSats];
+  flights = flightData;
+  renderList();
+  buildMarkers();
+}
+
+// ============================================================
+// UTC CLOCK
+// ============================================================
+function updateClock() {
+  const now = new Date();
+  const h = now.getUTCHours().toString().padStart(2,'0');
+  const m = now.getUTCMinutes().toString().padStart(2,'0');
+  const s = now.getUTCSeconds().toString().padStart(2,'0');
+  document.getElementById('utc-clock').textContent = `${h}:${m}:${s} UTC`;
+}
+
+setInterval(updateClock, 1000);
+updateClock();
+
+// ============================================================
+// ANIMATE
+// ============================================================
+let t = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  t += 0.01;
+
+  // Smooth rotation
+  rotX += (targetRotX - rotX) * 0.06;
+  rotY += (targetRotY - rotY) * 0.06;
+
+  if (autoRotate) targetRotY += 0.002;
+
+  globe.rotation.x = rotX;
+  globe.rotation.y = rotY;
+
+  // Rotate markers with globe
+  markers.forEach(m => {
+    const pos = latLonToVec3(m.lat, m.lon);
+    const euler = new THREE.Euler(rotX, rotY, 0);
+    pos.applyEuler(euler);
+    m.mesh.position.copy(pos);
+    m.glow.position.copy(pos);
+    // Pulse glow
+    const pScale = 1 + Math.sin(t * 2 + m.lat) * 0.3;
+    m.glow.scale.setScalar(pScale);
+  });
+
+  trails.forEach((trail, i) => {
+    trail.rotation.x = rotX;
+    trail.rotation.y = rotY;
+  });
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// ============================================================
+// INIT
+// ============================================================
+setTimeout(async () => {
+  await loadData();
+  document.getElementById('loading').classList.add('hidden');
+  showToast('✓ TRACKING SYSTEMS ONLINE');
+  // Auto-refresh every 60 seconds
+  setInterval(loadData, 60000);
+}, 2200);
+</script>
+</body>
+</html>
